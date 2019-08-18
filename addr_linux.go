@@ -341,6 +341,12 @@ func addrSubscribeAt(newNs, curNs netns.NsHandle, ch chan<- AddrUpdate, done <-c
 				}
 				continue
 			}
+			if from.Pid != nl.PidKernel {
+				if cberr != nil {
+					cberr(fmt.Errorf("Wrong sender portid %d, expected %d", from.Pid, nl.PidKernel))
+				}
+				continue
+			}
 			for _, m := range msgs {
 				if m.Header.Type == unix.NLMSG_DONE {
 					continue
