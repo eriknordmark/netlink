@@ -335,7 +335,7 @@ func addrSubscribeAt(newNs, curNs netns.NsHandle, ch chan<- AddrUpdate, done <-c
 				}
 				return
 			}
-			if from.Pid != nl.PidKernel {
+			if !listExisting && from.Pid != nl.PidKernel {
 				if cberr != nil {
 					cberr(fmt.Errorf("Wrong sender portid %d, expected %d", from.Pid, nl.PidKernel))
 				}

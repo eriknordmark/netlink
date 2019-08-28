@@ -1044,7 +1044,7 @@ func routeSubscribeAt(newNs, curNs netns.NsHandle, ch chan<- RouteUpdate, done <
 				}
 				return
 			}
-			if from.Pid != nl.PidKernel {
+			if !listExisting && from.Pid != nl.PidKernel {
 				if cberr != nil {
 					cberr(fmt.Errorf("Wrong sender portid %d, expected %d", from.Pid, nl.PidKernel))
 				}
