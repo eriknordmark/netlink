@@ -1823,7 +1823,7 @@ func linkSubscribeAt(newNs, curNs netns.NsHandle, ch chan<- LinkUpdate, done <-c
 				}
 				return
 			}
-			if !listExisting && from.Pid != nl.PidKernel {
+			if from.Pid != nl.PidKernel {
 				if cberr != nil {
 					cberr(fmt.Errorf("Wrong sender portid %d, expected %d", from.Pid, nl.PidKernel))
 				}
