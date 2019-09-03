@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"time"
 	"strings"
+	"time"
 
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
