@@ -258,15 +258,19 @@ func parseIpTuple(reader *bytes.Reader, tpl *ipTuple) uint8 {
 		switch t {
 		case nl.CTA_PROTO_SRC_PORT:
 			parseBERaw16(reader, &tpl.SrcPort)
+			protoInfoBytesRead += 2
 		case nl.CTA_PROTO_DST_PORT:
 			parseBERaw16(reader, &tpl.DstPort)
+			protoInfoBytesRead += 2
 		}
 		// Skip some padding 2 byte
 		reader.Seek(2, seekCurrent)
-		protoInfoBytesRead += 4
+		protoInfoBytesRead += 2
 	}
+	// Skip any remaining/unknown parts of the message
 	bytesRemaining := protoInfoTotalLen - protoInfoBytesRead
 	reader.Seek(int64(bytesRemaining), seekCurrent)
+
 	return tpl.Protocol
 }
 
