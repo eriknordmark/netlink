@@ -119,7 +119,7 @@ func (h *Handle) ConntrackDeleteFilter(table ConntrackTableType, family InetFami
 func ConntrackDeleteIPSrc(table ConntrackTableType, family InetFamily, addr net.IP,
 	proto uint8, port uint16, mark uint32, markMask uint32, debugShow bool) (uint, error) {
 	return pkgHandle.ConntrackDeleteIPSrc(table, family, addr, proto, port,
-			markMask, mask, debugShow)
+			mark, markMask, debugShow)
 }
 
 // conntrack -D -s address -p protocol -P port -m Mark  Delete conntrack flows matching the source IP and/or proto/port
