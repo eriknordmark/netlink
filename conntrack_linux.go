@@ -117,8 +117,9 @@ func (h *Handle) ConntrackDeleteFilter(table ConntrackTableType, family InetFami
 
 // conntrack -D
 func ConntrackDeleteIPSrc(table ConntrackTableType, family InetFamily, addr net.IP,
-	proto uint8, port uint16, mark uint32, mask uint32, debugShow bool) (uint, error) {
-	return pkgHandle.ConntrackDeleteIPSrc(table, family, addr, proto, port, mark, mask, debugShow)
+	proto uint8, port uint16, mark uint32, markMask uint32, debugShow bool) (uint, error) {
+	return pkgHandle.ConntrackDeleteIPSrc(table, family, addr, proto, port,
+			markMask, mask, debugShow)
 }
 
 // conntrack -D -s address -p protocol -P port -m Mark  Delete conntrack flows matching the source IP and/or proto/port
@@ -233,23 +234,27 @@ func parseIpTuple(reader *bytes.Reader, tpl *ipTuple) uint8 {
 			tpl.DstIP = v
 		}
 	}
-	// Skip the next 4 bytes  nl.NLA_F_NESTED|nl.CTA_TUPLE_PROTO
 	_, _, protoInfoTotalLen := parseNfAttrTL(reader)
+	// Track the number of bytes read.
+	protoInfoBytesRead := uint16(nl.SizeofNfattr)
 
 	_, t, l, v := parseNfAttrTLV(reader)
+	protoInfoBytesRead += uint16(nl.SizeofNfattr) + l
 	if t == nl.CTA_PROTO_NUM {
 		tpl.Protocol = uint8(v[0])
 	}
+	// We only parse TCP & UDP headers. Skip the others.
 	if tpl.Protocol != 6 && tpl.Protocol != 17 {
 		// skip the rest
-		reader.Seek(int64(protoInfoTotalLen - nl.SizeofNfattr - (l + nl.SizeofNfattr)),
-				seekCurrent)
+		reader.Seek(int64(protoInfoTotalLen - protoInfoBytesRead), seekCurrent)
 		return tpl.Protocol
 	}
 	// Skip some padding 3 bytes
 	reader.Seek(3, seekCurrent)
+	protoInfoBytesRead += 3
 	for i := 0; i < 2; i++ {
 		_, t, _ := parseNfAttrTL(reader)
+		protoInfoBytesRead += uint16(nl.SizeofNfattr)
 		switch t {
 		case nl.CTA_PROTO_SRC_PORT:
 			parseBERaw16(reader, &tpl.SrcPort)
@@ -258,7 +263,10 @@ func parseIpTuple(reader *bytes.Reader, tpl *ipTuple) uint8 {
 		}
 		// Skip some padding 2 byte
 		reader.Seek(2, seekCurrent)
+		protoInfoBytesRead += 4
 	}
+	bytesRemaining := protoInfoTotalLen - protoInfoBytesRead
+	reader.Seek(int64(bytesRemaining), seekCurrent)
 	return tpl.Protocol
 }
 
@@ -271,14 +279,14 @@ func parseNfAttrTLV(r *bytes.Reader) (isNested bool, attrType, length uint16, va
 	return isNested, attrType, length, value
 }
 
-func parseNfAttrTL(r *bytes.Reader) (isNested bool, attrType, len uint16) {
-	binary.Read(r, nl.NativeEndian(), &len)
+func parseNfAttrTL(r *bytes.Reader) (isNested bool, attrType, length uint16) {
+	binary.Read(r, nl.NativeEndian(), &length)
 
 	binary.Read(r, nl.NativeEndian(), &attrType)
 	isNested = (attrType & nl.NLA_F_NESTED) == nl.NLA_F_NESTED
 	attrType = attrType & (nl.NLA_F_NESTED - 1)
 
-	return isNested, attrType, len
+	return isNested, attrType, length
 }
 
 func parseBERaw16(r *bytes.Reader, v *uint16) {
