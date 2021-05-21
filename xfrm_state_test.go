@@ -222,6 +222,53 @@ func TestXfrmStateWithIfid(t *testing.T) {
 	}
 }
 
+func TestXfrmStateWithOutputMark(t *testing.T) {
+	minKernelRequired(t, 4, 14)
+	defer setUpNetlinkTest(t)()
+
+	state := getBaseState()
+	state.OutputMark = &XfrmMark{
+		Value: 0x0000000a,
+	}
+	if err := XfrmStateAdd(state); err != nil {
+		t.Fatal(err)
+	}
+	s, err := XfrmStateGet(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compareStates(state, s) {
+		t.Fatalf("unexpected state returned.\nExpected: %v.\nGot %v", state, s)
+	}
+	if err = XfrmStateDel(s); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestXfrmStateWithOutputMarkAndMask(t *testing.T) {
+	minKernelRequired(t, 4, 19)
+	defer setUpNetlinkTest(t)()
+
+	state := getBaseState()
+	state.OutputMark = &XfrmMark{
+		Value: 0x0000000a,
+		Mask:  0x0000000f,
+	}
+	if err := XfrmStateAdd(state); err != nil {
+		t.Fatal(err)
+	}
+	s, err := XfrmStateGet(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compareStates(state, s) {
+		t.Fatalf("unexpected state returned.\nExpected: %v.\nGot %v", state, s)
+	}
+	if err = XfrmStateDel(s); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func getBaseState() *XfrmState {
 	return &XfrmState{
 		// Force 4 byte notation for the IPv4 addresses
@@ -276,7 +323,8 @@ func compareStates(a, b *XfrmState) bool {
 		compareAlgo(a.Auth, b.Auth) &&
 		compareAlgo(a.Crypt, b.Crypt) &&
 		compareAlgo(a.Aead, b.Aead) &&
-		compareMarks(a.Mark, b.Mark)
+		compareMarks(a.Mark, b.Mark) &&
+		compareMarks(a.OutputMark, b.OutputMark)
 }
 
 func compareLimits(a, b *XfrmState) bool {

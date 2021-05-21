@@ -36,6 +36,7 @@ type U32 struct {
 	ClassId    uint32
 	Divisor    uint32 // Divisor MUST be power of 2.
 	Hash       uint32
+	Link       uint32
 	RedirIndex int
 	Sel        *TcU32Sel
 	Actions    []Action
@@ -88,7 +89,7 @@ func NewFw(attrs FilterAttrs, fattrs FilterFwAttrs) (*Fw, error) {
 		if CalcRtable(&police.Rate, rtab[:], rcellLog, fattrs.Mtu, linklayer) < 0 {
 			return nil, errors.New("TBF: failed to calculate rate table")
 		}
-		police.Burst = uint32(Xmittime(uint64(police.Rate.Rate), uint32(buffer)))
+		police.Burst = Xmittime(uint64(police.Rate.Rate), uint32(buffer))
 	}
 	police.Mtu = fattrs.Mtu
 	if police.PeakRate.Rate != 0 {
@@ -168,7 +169,6 @@ func (h *Handle) FilterReplace(filter Filter) error {
 }
 
 func (h *Handle) filterModify(filter Filter, flags int) error {
-	native = nl.NativeEndian()
 	req := h.newNetlinkRequest(unix.RTM_NEWTFILTER, flags|unix.NLM_F_ACK)
 	base := filter.Attrs()
 	msg := &nl.TcMsg{
@@ -224,6 +224,9 @@ func (h *Handle) filterModify(filter Filter, flags int) error {
 		}
 		if filter.Hash != 0 {
 			options.AddRtAttr(nl.TCA_U32_HASH, nl.Uint32Attr(filter.Hash))
+		}
+		if filter.Link != 0 {
+			options.AddRtAttr(nl.TCA_U32_LINK, nl.Uint32Attr(filter.Link))
 		}
 		actionsAttr := options.AddRtAttr(nl.TCA_U32_ACT, nil)
 		// backwards compatibility
@@ -429,6 +432,56 @@ func EncodeActions(attr *nl.RtAttr, actions []Action) error {
 			}
 			toTcGen(action.Attrs(), &mirred.TcGen)
 			aopts.AddRtAttr(nl.TCA_MIRRED_PARMS, mirred.Serialize())
+		case *TunnelKeyAction:
+			table := attr.AddRtAttr(tabIndex, nil)
+			tabIndex++
+			table.AddRtAttr(nl.TCA_ACT_KIND, nl.ZeroTerminated("tunnel_key"))
+			aopts := table.AddRtAttr(nl.TCA_ACT_OPTIONS, nil)
+			tun := nl.TcTunnelKey{
+				Action: int32(action.Action),
+			}
+			toTcGen(action.Attrs(), &tun.TcGen)
+			aopts.AddRtAttr(nl.TCA_TUNNEL_KEY_PARMS, tun.Serialize())
+			if action.Action == TCA_TUNNEL_KEY_SET {
+				aopts.AddRtAttr(nl.TCA_TUNNEL_KEY_ENC_KEY_ID, htonl(action.KeyID))
+				if v4 := action.SrcAddr.To4(); v4 != nil {
+					aopts.AddRtAttr(nl.TCA_TUNNEL_KEY_ENC_IPV4_SRC, v4[:])
+				} else if v6 := action.SrcAddr.To16(); v6 != nil {
+					aopts.AddRtAttr(nl.TCA_TUNNEL_KEY_ENC_IPV6_SRC, v6[:])
+				} else {
+					return fmt.Errorf("invalid src addr %s for tunnel_key action", action.SrcAddr)
+				}
+				if v4 := action.DstAddr.To4(); v4 != nil {
+					aopts.AddRtAttr(nl.TCA_TUNNEL_KEY_ENC_IPV4_DST, v4[:])
+				} else if v6 := action.DstAddr.To16(); v6 != nil {
+					aopts.AddRtAttr(nl.TCA_TUNNEL_KEY_ENC_IPV6_DST, v6[:])
+				} else {
+					return fmt.Errorf("invalid dst addr %s for tunnel_key action", action.DstAddr)
+				}
+				if action.DestPort != 0 {
+					aopts.AddRtAttr(nl.TCA_TUNNEL_KEY_ENC_DST_PORT, htons(action.DestPort))
+				}
+			}
+		case *SkbEditAction:
+			table := attr.AddRtAttr(tabIndex, nil)
+			tabIndex++
+			table.AddRtAttr(nl.TCA_ACT_KIND, nl.ZeroTerminated("skbedit"))
+			aopts := table.AddRtAttr(nl.TCA_ACT_OPTIONS, nil)
+			skbedit := nl.TcSkbEdit{}
+			toTcGen(action.Attrs(), &skbedit.TcGen)
+			aopts.AddRtAttr(nl.TCA_SKBEDIT_PARMS, skbedit.Serialize())
+			if action.QueueMapping != nil {
+				aopts.AddRtAttr(nl.TCA_SKBEDIT_QUEUE_MAPPING, nl.Uint16Attr(*action.QueueMapping))
+			}
+			if action.Priority != nil {
+				aopts.AddRtAttr(nl.TCA_SKBEDIT_PRIORITY, nl.Uint32Attr(*action.Priority))
+			}
+			if action.PType != nil {
+				aopts.AddRtAttr(nl.TCA_SKBEDIT_PTYPE, nl.Uint16Attr(*action.PType))
+			}
+			if action.Mark != nil {
+				aopts.AddRtAttr(nl.TCA_SKBEDIT_MARK, nl.Uint32Attr(*action.Mark))
+			}
 		case *ConnmarkAction:
 			table := attr.AddRtAttr(tabIndex, nil)
 			tabIndex++
@@ -486,6 +539,10 @@ func parseActions(tables []syscall.NetlinkRouteAttr) ([]Action, error) {
 					action = &ConnmarkAction{}
 				case "gact":
 					action = &GenericAction{}
+				case "tunnel_key":
+					action = &TunnelKeyAction{}
+				case "skbedit":
+					action = &SkbEditAction{}
 				default:
 					break nextattr
 				}
@@ -504,6 +561,41 @@ func parseActions(tables []syscall.NetlinkRouteAttr) ([]Action, error) {
 							toAttrs(&mirred.TcGen, action.Attrs())
 							action.(*MirredAction).Ifindex = int(mirred.Ifindex)
 							action.(*MirredAction).MirredAction = MirredAct(mirred.Eaction)
+						}
+					case "tunnel_key":
+						switch adatum.Attr.Type {
+						case nl.TCA_TUNNEL_KEY_PARMS:
+							tun := *nl.DeserializeTunnelKey(adatum.Value)
+							action.(*TunnelKeyAction).ActionAttrs = ActionAttrs{}
+							toAttrs(&tun.TcGen, action.Attrs())
+							action.(*TunnelKeyAction).Action = TunnelKeyAct(tun.Action)
+						case nl.TCA_TUNNEL_KEY_ENC_KEY_ID:
+							action.(*TunnelKeyAction).KeyID = networkOrder.Uint32(adatum.Value[0:4])
+						case nl.TCA_TUNNEL_KEY_ENC_IPV6_SRC, nl.TCA_TUNNEL_KEY_ENC_IPV4_SRC:
+							action.(*TunnelKeyAction).SrcAddr = adatum.Value[:]
+						case nl.TCA_TUNNEL_KEY_ENC_IPV6_DST, nl.TCA_TUNNEL_KEY_ENC_IPV4_DST:
+							action.(*TunnelKeyAction).DstAddr = adatum.Value[:]
+						case nl.TCA_TUNNEL_KEY_ENC_DST_PORT:
+							action.(*TunnelKeyAction).DestPort = ntohs(adatum.Value)
+						}
+					case "skbedit":
+						switch adatum.Attr.Type {
+						case nl.TCA_SKBEDIT_PARMS:
+							skbedit := *nl.DeserializeSkbEdit(adatum.Value)
+							action.(*SkbEditAction).ActionAttrs = ActionAttrs{}
+							toAttrs(&skbedit.TcGen, action.Attrs())
+						case nl.TCA_SKBEDIT_MARK:
+							mark := native.Uint32(adatum.Value[0:4])
+							action.(*SkbEditAction).Mark = &mark
+						case nl.TCA_SKBEDIT_PRIORITY:
+							priority := native.Uint32(adatum.Value[0:4])
+							action.(*SkbEditAction).Priority = &priority
+						case nl.TCA_SKBEDIT_PTYPE:
+							ptype := native.Uint16(adatum.Value[0:2])
+							action.(*SkbEditAction).PType = &ptype
+						case nl.TCA_SKBEDIT_QUEUE_MAPPING:
+							mapping := native.Uint16(adatum.Value[0:2])
+							action.(*SkbEditAction).QueueMapping = &mapping
 						}
 					case "bpf":
 						switch adatum.Attr.Type {
@@ -539,7 +631,6 @@ func parseActions(tables []syscall.NetlinkRouteAttr) ([]Action, error) {
 }
 
 func parseU32Data(filter Filter, data []syscall.NetlinkRouteAttr) (bool, error) {
-	native = nl.NativeEndian()
 	u32 := filter.(*U32)
 	detailed := false
 	for _, datum := range data {
@@ -577,13 +668,14 @@ func parseU32Data(filter Filter, data []syscall.NetlinkRouteAttr) (bool, error) 
 			u32.Divisor = native.Uint32(datum.Value)
 		case nl.TCA_U32_HASH:
 			u32.Hash = native.Uint32(datum.Value)
+		case nl.TCA_U32_LINK:
+			u32.Link = native.Uint32(datum.Value)
 		}
 	}
 	return detailed, nil
 }
 
 func parseFwData(filter Filter, data []syscall.NetlinkRouteAttr) (bool, error) {
-	native = nl.NativeEndian()
 	fw := filter.(*Fw)
 	detailed := true
 	for _, datum := range data {
@@ -612,7 +704,6 @@ func parseFwData(filter Filter, data []syscall.NetlinkRouteAttr) (bool, error) {
 }
 
 func parseBpfData(filter Filter, data []syscall.NetlinkRouteAttr) (bool, error) {
-	native = nl.NativeEndian()
 	bpf := filter.(*BpfFilter)
 	detailed := true
 	for _, datum := range data {
@@ -638,7 +729,6 @@ func parseBpfData(filter Filter, data []syscall.NetlinkRouteAttr) (bool, error) 
 }
 
 func parseMatchAllData(filter Filter, data []syscall.NetlinkRouteAttr) (bool, error) {
-	native = nl.NativeEndian()
 	matchall := filter.(*MatchAll)
 	detailed := true
 	for _, datum := range data {
@@ -696,7 +786,7 @@ func CalcRtable(rate *nl.TcRateSpec, rtab []uint32, cellLog int, mtu uint32, lin
 	}
 	for i := 0; i < 256; i++ {
 		sz = AdjustSize(uint((i+1)<<uint32(cellLog)), uint(mpu), linklayer)
-		rtab[i] = uint32(Xmittime(uint64(bps), uint32(sz)))
+		rtab[i] = Xmittime(uint64(bps), uint32(sz))
 	}
 	rate.CellAlign = -1
 	rate.CellLog = uint8(cellLog)
@@ -706,14 +796,12 @@ func CalcRtable(rate *nl.TcRateSpec, rtab []uint32, cellLog int, mtu uint32, lin
 
 func DeserializeRtab(b []byte) [256]uint32 {
 	var rtab [256]uint32
-	native := nl.NativeEndian()
 	r := bytes.NewReader(b)
 	_ = binary.Read(r, native, &rtab)
 	return rtab
 }
 
 func SerializeRtab(rtab [256]uint32) []byte {
-	native := nl.NativeEndian()
 	var w bytes.Buffer
 	_ = binary.Write(&w, native, rtab)
 	return w.Bytes()

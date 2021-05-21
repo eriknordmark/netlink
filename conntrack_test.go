@@ -92,10 +92,18 @@ func TestConntrackSocket(t *testing.T) {
 // Creates some flows and checks that they are correctly fetched from the conntrack table
 func TestConntrackTableList(t *testing.T) {
 	skipUnlessRoot(t)
+	k, m, err := KernelVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// conntrack l3proto was unified since 4.19
+	// https://github.com/torvalds/linux/commit/a0ae2562c6c4b2721d9fddba63b7286c13517d9f
+	if k < 4 || k == 4 && m < 19 {
+		setUpNetlinkTestWithKModule(t, "nf_conntrack_ipv4")
+		setUpNetlinkTestWithKModule(t, "nf_conntrack_ipv6")
+	}
 	setUpNetlinkTestWithKModule(t, "nf_conntrack")
 	setUpNetlinkTestWithKModule(t, "nf_conntrack_netlink")
-	setUpNetlinkTestWithKModule(t, "nf_conntrack_ipv4")
-	setUpNetlinkTestWithKModule(t, "nf_conntrack_ipv6")
 
 	// Creates a new namespace and bring up the loopback interface
 	origns, ns, h := nsCreateAndEnter(t)
@@ -107,7 +115,7 @@ func TestConntrackTableList(t *testing.T) {
 	setUpF(t, "/proc/sys/net/netfilter/nf_conntrack_acct", "1")
 
 	// Flush the table to start fresh
-	err := h.ConntrackTableFlush(ConntrackTable)
+	err = h.ConntrackTableFlush(ConntrackTable)
 	CheckErrorFail(t, err)
 
 	// Create 5 udp
@@ -149,8 +157,16 @@ func TestConntrackTableFlush(t *testing.T) {
 	skipUnlessRoot(t)
 	setUpNetlinkTestWithKModule(t, "nf_conntrack")
 	setUpNetlinkTestWithKModule(t, "nf_conntrack_netlink")
-	setUpNetlinkTestWithKModule(t, "nf_conntrack_ipv4")
-
+	k, m, err := KernelVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// conntrack l3proto was unified since 4.19
+	// https://github.com/torvalds/linux/commit/a0ae2562c6c4b2721d9fddba63b7286c13517d9f
+	if k < 4 || k == 4 && m < 19 {
+		setUpNetlinkTestWithKModule(t, "nf_conntrack_ipv4")
+	}
+	setUpNetlinkTestWithKModule(t, "nf_conntrack")
 	// Creates a new namespace and bring up the loopback interface
 	origns, ns, h := nsCreateAndEnter(t)
 	defer netns.Set(*origns)
@@ -211,7 +227,15 @@ func TestConntrackTableDelete(t *testing.T) {
 	skipUnlessRoot(t)
 	setUpNetlinkTestWithKModule(t, "nf_conntrack")
 	setUpNetlinkTestWithKModule(t, "nf_conntrack_netlink")
-	setUpNetlinkTestWithKModule(t, "nf_conntrack_ipv4")
+	k, m, err := KernelVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// conntrack l3proto was unified since 4.19
+	// https://github.com/torvalds/linux/commit/a0ae2562c6c4b2721d9fddba63b7286c13517d9f
+	if k < 4 || k == 4 && m < 19 {
+		setUpNetlinkTestWithKModule(t, "nf_conntrack_ipv4")
+	}
 
 	// Creates a new namespace and bring up the loopback interface
 	origns, ns, h := nsCreateAndEnter(t)
@@ -252,6 +276,8 @@ func TestConntrackTableDelete(t *testing.T) {
 	// Create a filter to erase groupB flows
 	filter := &ConntrackFilter{}
 	filter.AddIP(ConntrackOrigDstIP, net.ParseIP("127.0.0.20"))
+	filter.AddProtocol(17)
+	filter.AddPort(ConntrackOrigDstPort, 8000)
 
 	// Flush entries of groupB
 	var deleted uint
@@ -296,46 +322,52 @@ func TestConntrackFilter(t *testing.T) {
 	flowList = append(flowList, ConntrackFlow{
 		FamilyType: unix.AF_INET,
 		Forward: ipTuple{
-			SrcIP:   net.ParseIP("10.0.0.1"),
-			DstIP:   net.ParseIP("20.0.0.1"),
-			SrcPort: 1000,
-			DstPort: 2000,
+			SrcIP:    net.ParseIP("10.0.0.1"),
+			DstIP:    net.ParseIP("20.0.0.1"),
+			SrcPort:  1000,
+			DstPort:  2000,
+			Protocol: 17,
 		},
 		Reverse: ipTuple{
-			SrcIP:   net.ParseIP("20.0.0.1"),
-			DstIP:   net.ParseIP("192.168.1.1"),
-			SrcPort: 2000,
-			DstPort: 1000,
+			SrcIP:    net.ParseIP("20.0.0.1"),
+			DstIP:    net.ParseIP("192.168.1.1"),
+			SrcPort:  2000,
+			DstPort:  1000,
+			Protocol: 17,
 		},
 	},
 		ConntrackFlow{
 			FamilyType: unix.AF_INET,
 			Forward: ipTuple{
-				SrcIP:   net.ParseIP("10.0.0.2"),
-				DstIP:   net.ParseIP("20.0.0.2"),
-				SrcPort: 5000,
-				DstPort: 6000,
+				SrcIP:    net.ParseIP("10.0.0.2"),
+				DstIP:    net.ParseIP("20.0.0.2"),
+				SrcPort:  5000,
+				DstPort:  6000,
+				Protocol: 6,
 			},
 			Reverse: ipTuple{
-				SrcIP:   net.ParseIP("20.0.0.2"),
-				DstIP:   net.ParseIP("192.168.1.1"),
-				SrcPort: 6000,
-				DstPort: 5000,
+				SrcIP:    net.ParseIP("20.0.0.2"),
+				DstIP:    net.ParseIP("192.168.1.1"),
+				SrcPort:  6000,
+				DstPort:  5000,
+				Protocol: 6,
 			},
 		},
 		ConntrackFlow{
 			FamilyType: unix.AF_INET6,
 			Forward: ipTuple{
-				SrcIP:   net.ParseIP("eeee:eeee:eeee:eeee:eeee:eeee:eeee:eeee"),
-				DstIP:   net.ParseIP("dddd:dddd:dddd:dddd:dddd:dddd:dddd:dddd"),
-				SrcPort: 1000,
-				DstPort: 2000,
+				SrcIP:    net.ParseIP("eeee:eeee:eeee:eeee:eeee:eeee:eeee:eeee"),
+				DstIP:    net.ParseIP("dddd:dddd:dddd:dddd:dddd:dddd:dddd:dddd"),
+				SrcPort:  1000,
+				DstPort:  2000,
+				Protocol: 132,
 			},
 			Reverse: ipTuple{
-				SrcIP:   net.ParseIP("dddd:dddd:dddd:dddd:dddd:dddd:dddd:dddd"),
-				DstIP:   net.ParseIP("eeee:eeee:eeee:eeee:eeee:eeee:eeee:eeee"),
-				SrcPort: 2000,
-				DstPort: 1000,
+				SrcIP:    net.ParseIP("dddd:dddd:dddd:dddd:dddd:dddd:dddd:dddd"),
+				DstIP:    net.ParseIP("eeee:eeee:eeee:eeee:eeee:eeee:eeee:eeee"),
+				SrcPort:  2000,
+				DstPort:  1000,
+				Protocol: 132,
 			},
 		})
 
@@ -345,12 +377,75 @@ func TestConntrackFilter(t *testing.T) {
 		t.Fatalf("Error, empty filter cannot match, v4:%d, v6:%d", v4Match, v6Match)
 	}
 
-	// SrcIP filter
+	// Filter errors
+
+	// Adding same attribute should fail
+	filter := &ConntrackFilter{}
+	err := filter.AddIP(ConntrackOrigSrcIP, net.ParseIP("10.0.0.1"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if err := filter.AddIP(ConntrackOrigSrcIP, net.ParseIP("10.0.0.1")); err == nil {
+		t.Fatalf("Error, it should fail adding same attribute to the filter")
+	}
+	err = filter.AddProtocol(6)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if err := filter.AddProtocol(17); err == nil {
+		t.Fatalf("Error, it should fail adding same attribute to the filter")
+	}
+	filter.AddPort(ConntrackOrigSrcPort, 80)
+	if err := filter.AddPort(ConntrackOrigSrcPort, 80); err == nil {
+		t.Fatalf("Error, it should fail adding same attribute to the filter")
+	}
+
+	// Can not add a Port filter without Layer 4 protocol
+	filter = &ConntrackFilter{}
+	if err := filter.AddPort(ConntrackOrigSrcPort, 80); err == nil {
+		t.Fatalf("Error, it should fail adding a port filter without a protocol")
+	}
+
+	// Can not add a Port filter if the Layer 4 protocol does not support it
+	filter = &ConntrackFilter{}
+	err = filter.AddProtocol(47)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if err := filter.AddPort(ConntrackOrigSrcPort, 80); err == nil {
+		t.Fatalf("Error, it should fail adding a port filter with a wrong protocol")
+	}
+
+	// Proto filter
 	filterV4 := &ConntrackFilter{}
-	filterV4.AddIP(ConntrackOrigSrcIP, net.ParseIP("10.0.0.1"))
+	err = filterV4.AddProtocol(6)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	filterV6 := &ConntrackFilter{}
-	filterV6.AddIP(ConntrackOrigSrcIP, net.ParseIP("eeee:eeee:eeee:eeee:eeee:eeee:eeee:eeee"))
+	err = filterV6.AddProtocol(132)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
+	if v4Match != 1 || v6Match != 1 {
+		t.Fatalf("Error, there should be only 1 match for TCP:%d, UDP:%d", v4Match, v6Match)
+	}
+
+	// SrcIP filter
+	filterV4 = &ConntrackFilter{}
+	err = filterV4.AddIP(ConntrackOrigSrcIP, net.ParseIP("10.0.0.1"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	filterV6 = &ConntrackFilter{}
+	err = filterV6.AddIP(ConntrackOrigSrcIP, net.ParseIP("eeee:eeee:eeee:eeee:eeee:eeee:eeee:eeee"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
 	if v4Match != 1 || v6Match != 1 {
@@ -359,10 +454,16 @@ func TestConntrackFilter(t *testing.T) {
 
 	// DstIp filter
 	filterV4 = &ConntrackFilter{}
-	filterV4.AddIP(ConntrackOrigDstIP, net.ParseIP("20.0.0.1"))
+	err = filterV4.AddIP(ConntrackOrigDstIP, net.ParseIP("20.0.0.1"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	filterV6 = &ConntrackFilter{}
-	filterV6.AddIP(ConntrackOrigDstIP, net.ParseIP("dddd:dddd:dddd:dddd:dddd:dddd:dddd:dddd"))
+	err = filterV6.AddIP(ConntrackOrigDstIP, net.ParseIP("dddd:dddd:dddd:dddd:dddd:dddd:dddd:dddd"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
 	if v4Match != 1 || v6Match != 1 {
@@ -371,10 +472,16 @@ func TestConntrackFilter(t *testing.T) {
 
 	// SrcIP for NAT
 	filterV4 = &ConntrackFilter{}
-	filterV4.AddIP(ConntrackReplySrcIP, net.ParseIP("20.0.0.1"))
+	err = filterV4.AddIP(ConntrackReplySrcIP, net.ParseIP("20.0.0.1"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	filterV6 = &ConntrackFilter{}
-	filterV6.AddIP(ConntrackReplySrcIP, net.ParseIP("dddd:dddd:dddd:dddd:dddd:dddd:dddd:dddd"))
+	err = filterV6.AddIP(ConntrackReplySrcIP, net.ParseIP("dddd:dddd:dddd:dddd:dddd:dddd:dddd:dddd"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
 	if v4Match != 1 || v6Match != 1 {
@@ -383,10 +490,16 @@ func TestConntrackFilter(t *testing.T) {
 
 	// DstIP for NAT
 	filterV4 = &ConntrackFilter{}
-	filterV4.AddIP(ConntrackReplyDstIP, net.ParseIP("192.168.1.1"))
+	err = filterV4.AddIP(ConntrackReplyDstIP, net.ParseIP("192.168.1.1"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	filterV6 = &ConntrackFilter{}
-	filterV6.AddIP(ConntrackReplyDstIP, net.ParseIP("dddd:dddd:dddd:dddd:dddd:dddd:dddd:dddd"))
+	err = filterV6.AddIP(ConntrackReplyDstIP, net.ParseIP("dddd:dddd:dddd:dddd:dddd:dddd:dddd:dddd"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
 	if v4Match != 2 || v6Match != 0 {
@@ -395,13 +508,200 @@ func TestConntrackFilter(t *testing.T) {
 
 	// AnyIp for Nat
 	filterV4 = &ConntrackFilter{}
-	filterV4.AddIP(ConntrackReplyAnyIP, net.ParseIP("192.168.1.1"))
+	err = filterV4.AddIP(ConntrackReplyAnyIP, net.ParseIP("192.168.1.1"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	filterV6 = &ConntrackFilter{}
-	filterV6.AddIP(ConntrackReplyAnyIP, net.ParseIP("eeee:eeee:eeee:eeee:eeee:eeee:eeee:eeee"))
+	err = filterV6.AddIP(ConntrackReplyAnyIP, net.ParseIP("eeee:eeee:eeee:eeee:eeee:eeee:eeee:eeee"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
 	if v4Match != 2 || v6Match != 1 {
 		t.Fatalf("Error, there should be an exact match, v4:%d, v6:%d", v4Match, v6Match)
+	}
+
+	// SrcIPNet filter
+	filterV4 = &ConntrackFilter{}
+	ipNet, err := ParseIPNet("10.0.0.0/12")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV4.AddIPNet(ConntrackOrigSrcIP, ipNet)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	filterV6 = &ConntrackFilter{}
+	ipNet, err = ParseIPNet("eeee:eeee:eeee:eeee::/64")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV6.AddIPNet(ConntrackOrigSrcIP, ipNet)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
+	if v4Match != 2 || v6Match != 1 {
+		t.Fatalf("Error, there should be only 1 match, v4:%d, v6:%d", v4Match, v6Match)
+	}
+
+	// DstIpNet filter
+	filterV4 = &ConntrackFilter{}
+	ipNet, err = ParseIPNet("20.0.0.0/12")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV4.AddIPNet(ConntrackOrigDstIP, ipNet)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	filterV6 = &ConntrackFilter{}
+	ipNet, err = ParseIPNet("dddd:dddd:dddd:dddd::/64")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV6.AddIPNet(ConntrackOrigDstIP, ipNet)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
+	if v4Match != 2 || v6Match != 1 {
+		t.Fatalf("Error, there should be only 1 match, v4:%d, v6:%d", v4Match, v6Match)
+	}
+
+	// SrcIPNet for NAT
+	filterV4 = &ConntrackFilter{}
+	ipNet, err = ParseIPNet("20.0.0.0/12")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV4.AddIPNet(ConntrackReplySrcIP, ipNet)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	filterV6 = &ConntrackFilter{}
+	ipNet, err = ParseIPNet("dddd:dddd:dddd:dddd::/64")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV6.AddIPNet(ConntrackReplySrcIP, ipNet)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
+	if v4Match != 2 || v6Match != 1 {
+		t.Fatalf("Error, there should be only 1 match, v4:%d, v6:%d", v4Match, v6Match)
+	}
+
+	// DstIPNet for NAT
+	filterV4 = &ConntrackFilter{}
+	ipNet, err = ParseIPNet("192.168.0.0/12")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV4.AddIPNet(ConntrackReplyDstIP, ipNet)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	filterV6 = &ConntrackFilter{}
+	ipNet, err = ParseIPNet("dddd:dddd:dddd:dddd::/64")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV6.AddIPNet(ConntrackReplyDstIP, ipNet)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
+	if v4Match != 2 || v6Match != 0 {
+		t.Fatalf("Error, there should be an exact match, v4:%d, v6:%d", v4Match, v6Match)
+	}
+
+	// AnyIpNet for Nat
+	filterV4 = &ConntrackFilter{}
+	ipNet, err = ParseIPNet("192.168.0.0/12")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV4.AddIPNet(ConntrackReplyAnyIP, ipNet)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	filterV6 = &ConntrackFilter{}
+	ipNet, err = ParseIPNet("eeee:eeee:eeee:eeee::/64")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV6.AddIPNet(ConntrackReplyAnyIP, ipNet)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
+	if v4Match != 2 || v6Match != 1 {
+		t.Fatalf("Error, there should be an exact match, v4:%d, v6:%d", v4Match, v6Match)
+	}
+	// SrcPort filter
+	filterV4 = &ConntrackFilter{}
+	err = filterV4.AddProtocol(6)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV4.AddPort(ConntrackOrigSrcPort, 5000)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	filterV6 = &ConntrackFilter{}
+	err = filterV6.AddProtocol(132)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV6.AddPort(ConntrackOrigSrcPort, 1000)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
+	if v4Match != 1 || v6Match != 1 {
+		t.Fatalf("Error, there should be only 1 match, v4:%d, v6:%d", v4Match, v6Match)
+	}
+
+	// DstPort filter
+	filterV4 = &ConntrackFilter{}
+	err = filterV4.AddProtocol(6)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV4.AddPort(ConntrackOrigDstPort, 6000)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	filterV6 = &ConntrackFilter{}
+	err = filterV6.AddProtocol(132)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	err = filterV6.AddPort(ConntrackOrigDstPort, 2000)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	v4Match, v6Match = applyFilter(flowList, filterV4, filterV6)
+	if v4Match != 1 || v6Match != 1 {
+		t.Fatalf("Error, there should be only 1 match, v4:%d, v6:%d", v4Match, v6Match)
 	}
 }
